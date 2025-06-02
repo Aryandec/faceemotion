@@ -4,21 +4,35 @@ import React, { useState, useRef, useCallback } from "react";
 import Image from "next/image";
 import Webcam from "react-webcam";
 import { Button } from "../components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../components/ui/tabs";
 import { FiUpload } from "react-icons/fi";
 import { MdOutlineCameraAlt } from "react-icons/md";
 import { IoCheckmark } from "react-icons/io5";
 import { FaArrowRotateLeft } from "react-icons/fa6";
+import { useRouter } from "next/navigation";
 
 export default function HomePage() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [activeTab, setActiveTab] = useState("upload");
+  const [file, setFile] = useState(null);
   const webcamRef = useRef(null);
   const fileInputRef = useRef(null);
+  const router = useRouter();
 
   const handleFileUpload = (event) => {
     const file = event.target.files?.[0];
+    setFile(file);
     if (file) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -26,6 +40,8 @@ export default function HomePage() {
       };
       reader.readAsDataURL(file);
     }
+    console.log("File uploaded:", file);
+    console.log("Selected image:", selectedImage);
   };
 
   const capturePhoto = useCallback(() => {
@@ -37,14 +53,80 @@ export default function HomePage() {
 
   const resetImage = () => {
     setSelectedImage(null);
+    setFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
 
-  const handleContinue = () => {
+  const base64ToBlob = (base64) => {
+    const byteString = atob(base64.split(",")[1]);
+    const mimeString = base64.split(",")[0].split(":")[1].split(";")[0];
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    return new Blob([ab], { type: mimeString });
+  };
+
+  const handleContinue = async () => {
     console.log("Continue with image:", selectedImage);
-    alert("Image ready! Continuing to next step...");
+
+    let imageToSend = file;
+
+    if (!file && selectedImage?.startsWith("data:image")) {
+      const blob = base64ToBlob(selectedImage);
+      imageToSend = new File([blob], "webcam.jpg", { type: "image/jpeg" });
+    }
+
+    if (!imageToSend) {
+      alert("Please upload or capture an image.");
+      return;
+    }
+
+    const formData = new FormData();
+    // ✅ This MUST be named exactly "image" to match backend
+    formData.append("image", imageToSend);
+
+    // Log the FormData content
+    for (let [key, value] of formData.entries()) {
+      console.log(`${key}:`, value);
+    }
+
+    try {
+      const response = await fetch("/api/emotion", {
+        method: "POST",
+        body: formData,
+      });
+
+      const rawResponse = await response.text();
+      console.log("Raw Response:", rawResponse);
+
+      if (!response.ok) {
+        try {
+          const error = JSON.parse(rawResponse);
+          console.error("API Error:", error);
+          alert(error.error || "Error detecting emotion");
+        } catch (parseError) {
+          console.error("Unexpected Response Format:", rawResponse);
+          alert("Unexpected response from the server");
+        }
+        return;
+      }
+
+      const result = JSON.parse(rawResponse);
+      console.log("API Result:", result);
+
+      router.push(
+        `/results/emotionResult?emotion=${encodeURIComponent(
+          JSON.stringify(result)
+        )}`
+      );
+    } catch (error) {
+      console.error("Fetch Error:", error);
+      alert("Error uploading the image");
+    }
   };
 
   return (
